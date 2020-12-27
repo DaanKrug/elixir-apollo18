@@ -1,0 +1,10 @@
+*.project
+**/.settings/*
+*.pem
+*.ppk
+*.sh
+*.txt
+*.tar
+**/_build/*
+**/deps/*
+**/doc/*
