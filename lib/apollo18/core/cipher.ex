@@ -9,6 +9,7 @@ defmodule Apollo18.Cipher do
 
   alias Krug.StringUtil
   alias Krug.NumberUtil
+  alias Krug.SanitizerUtil
   alias Krug.EtsUtil
   alias Apollo18.CipherUtil
   
@@ -117,13 +118,14 @@ defmodule Apollo18.Cipher do
   ```
   """
   def cipher(string,salt \\ 1) do
-    EtsUtil.new(:apollo18_cipher)
+    key = String.to_atom("apollo18_cipher_#{SanitizerUtil.generate_random_only_num(30)}")
+    EtsUtil.new(key)
     salt = cond do
       (salt >= 1) -> salt
       true -> 1
     end
-    result = cipher_salt(string,salt,0)
-    EtsUtil.delete(:apollo18_cipher)
+    result = cipher_salt(string,salt,key,0)
+    EtsUtil.delete(key)
     result
   end
   
@@ -150,47 +152,53 @@ defmodule Apollo18.Cipher do
   ```
   """
   def decipher(string,salt \\ 1) do
-    EtsUtil.new(:apollo18_cipher)
+    key = String.to_atom("apollo18_decipher_#{SanitizerUtil.generate_random_only_num(30)}")
+    EtsUtil.new(key)
     salt = cond do
       (salt >= 1) -> salt
       true -> 1
     end
-    decipher_salt(string,salt,0)
+    result = decipher_salt(string,salt,key,0)
+    EtsUtil.delete(key)
+    result
   end
 
 
 
-  defp cipher_salt(string,salt,count) do
+  defp cipher_salt(string,salt,key,count) do
     cond do
       (count >= salt) -> string
-      true -> cipher_salt_cipher(string) |> cipher_salt(salt,count + 1)
+      true -> cipher_salt_cipher(string,key) |> cipher_salt(salt,key,count + 1)
     end
   end
   
   
   
-  defp cipher_salt_cipher(string) do
-    valid_chars = valid_chars()
+  defp cipher_salt_cipher(string,key) do
+    rand_key = SanitizerUtil.generate_random_only_num(10)
+    valid_chars = CipherUtil.valid_chars()
     chars = String.graphemes(string)
-    sum = :rand.uniform(9999 - length(valid_chars))
+    sum = CipherUtil.get_sum()
     sum_chars = sum |> StringUtil.left_zeros(4) |> String.graphemes()
-    header = cipher_chars(sum_chars,[],["0","1","2","3","4","5","6","7","8","9"],0,4,@factor) |> IO.iodata_to_binary()
-    body = cipher_chars(chars,[],valid_chars,0,length(chars),sum) |> IO.iodata_to_binary()
+    header = cipher_chars(sum_chars,[],["0","1","2","3","4","5","6","7","8","9"],0,4,@factor,key,rand_key) 
+               |> IO.iodata_to_binary()
+    body = cipher_chars(chars,[],valid_chars,0,length(chars),sum,key,rand_key) |> IO.iodata_to_binary()
     [Enum.random(@rand_headers),header,body] |> IO.iodata_to_binary()
   end
   
   
   
-  defp decipher_salt(string,salt,count) do
+  defp decipher_salt(string,salt,key,count) do
     cond do
       (count >= salt) -> string
-      true -> decipher_salt_decipher(string) |> decipher_salt(salt,count + 1)
+      true -> decipher_salt_decipher(string,key) |> decipher_salt(salt,key,count + 1)
     end
   end
   
   
   
-  defp decipher_salt_decipher(string) do
+  defp decipher_salt_decipher(string,key) do
+    rand_key = SanitizerUtil.generate_random_only_num(10)
     string = clear_one_header(@rand_headers,string)
     header = String.slice(string,0..15)
     header_a = String.slice(header,0..3) |> extract_value_from_string_char()
@@ -201,46 +209,50 @@ defmodule Apollo18.Cipher do
     sum = "#{header_a - @factor}#{header_b - @factor}#{header_c - @factor}#{header_d - @factor}" 
              |> NumberUtil.to_integer()
     body_array = body |> String.codepoints() |> Enum.chunk_every(4) |> Enum.map(&Enum.join/1)
-    decipher_chars(body_array,valid_chars(),sum)
+    decipher_chars(body_array,CipherUtil.valid_chars(),sum,key,rand_key)
   end
 
   
   
-  defp cipher_chars(chars,new_chars,valid_chars,count,max,sum) do
+  defp cipher_chars(chars,new_chars,valid_chars,count,max,sum,key,rand_key) do
     cond do
       (count >= max) -> new_chars |> Enum.reverse()
-      true -> add_if_valid(chars,new_chars,valid_chars,count,max,sum)
+      true -> add_if_valid(chars,new_chars,valid_chars,count,max,sum,key,rand_key)
     end
   end
 
 
   
-  defp add_if_valid(chars,new_chars,valid_chars,count,max,sum) do
+  defp add_if_valid(chars,new_chars,valid_chars,count,max,sum,key,rand_key) do
     char = chars |> hd()
+    if(!(Enum.member?(valid_chars,char))) do
+      IO.puts("invalid: [#{char}]")
+    end
     cond do
-      (!(Enum.member?(valid_chars,char))) -> cipher_chars(chars |> tl(),new_chars,valid_chars,count + 1,max,sum)
-      true -> cipher_chars(chars |> tl(),[cipher_char(valid_chars,char,sum) | new_chars],
-                           valid_chars,count + 1,max,sum)
+      (!(Enum.member?(valid_chars,char))) 
+        -> cipher_chars(chars |> tl(),new_chars,valid_chars,count + 1,max,sum,key,rand_key)
+      true -> cipher_chars(chars |> tl(),[cipher_char(valid_chars,char,sum,key,rand_key) | new_chars],
+                           valid_chars,count + 1,max,sum,key,rand_key)
     end
   end
 
 
   
-  defp cipher_char(valid_chars,char,sum) do
-    cached_value = EtsUtil.read_from_cache(:apollo18_cipher,"ciphered_#{char}_#{sum}")
+  defp cipher_char(valid_chars,char,sum,key,rand_key) do
+    cached_value = EtsUtil.read_from_cache(key,"ciphered_#{char}_#{sum}_#{rand_key}")
     cond do
       (nil != cached_value) -> cached_value
-      true -> get_cipher_char_no_cache(valid_chars,char,sum) 
+      true -> get_cipher_char_no_cache(valid_chars,char,sum,key,rand_key) 
     end
   end
   
   
   
-  defp get_cipher_char_no_cache(valid_chars,char,sum) do
+  defp get_cipher_char_no_cache(valid_chars,char,sum,key,rand_key) do
     chars = (sum + get_pos_char(valid_chars,char,0))
               |> Integer.to_string(16) |> StringUtil.left_zeros(4) |> String.graphemes()
     cipher_char = [Enum.at(chars,1),Enum.at(chars,0),Enum.at(chars,3),Enum.at(chars,2)] |> IO.iodata_to_binary()
-    EtsUtil.store_in_cache(:apollo18_cipher,"ciphered_#{char}_#{sum}",cipher_char)
+    EtsUtil.store_in_cache(key,"ciphered_#{char}_#{sum}_#{rand_key}",cipher_char)
     cipher_char
   end
 
@@ -266,29 +278,32 @@ defmodule Apollo18.Cipher do
 
 
   
-  defp decipher_chars(string_array,valid_chars,sum,deciphered_array \\ []) do
+  defp decipher_chars(string_array,valid_chars,sum,key,rand_key,deciphered_array \\ []) do
     cond do
-      (nil == string_array or length(string_array) == 0) -> deciphered_array |> Enum.reverse() |> IO.iodata_to_binary()
-      true -> decipher_chars(string_array |> tl(),valid_chars,sum,
-                             [decipher_char(string_array |> hd(),valid_chars,sum) | deciphered_array])
+      (nil == string_array or length(string_array) == 0) 
+        -> deciphered_array |> Enum.reverse() |> Enum.join("")
+      true -> decipher_chars(string_array |> tl(),valid_chars,sum,key,rand_key,
+                             [decipher_char(string_array |> hd(),valid_chars,sum,key,rand_key) | deciphered_array])
     end
   end
 
 
 
-  defp decipher_char(string_char,valid_chars,sum) do
-    cached_value = EtsUtil.read_from_cache(:apollo18_cipher,["deciphered",string_char,sum])
+  defp decipher_char(string_char,valid_chars,sum,key,rand_key) do
+    cached_value = EtsUtil.read_from_cache(key,"deciphered_#{string_char}_#{sum}_#{rand_key}")
     cond do
-      (nil != cached_value) -> cached_value
-      true -> decipher_char_no_cache(string_char,valid_chars,sum) 
+      (nil == cached_value) -> decipher_char_no_cache(string_char,valid_chars,sum,key,rand_key) 
+      (cached_value == "") -> decipher_char_no_cache(string_char,valid_chars,sum,key,rand_key) 
+      true -> cached_value
     end
   end
 
 
   
-  defp decipher_char_no_cache(string_char,valid_chars,sum) do
-    deciphered_char = Enum.at(valid_chars,(extract_value_from_string_char(string_char) - sum))
-    EtsUtil.store_in_cache(:apollo18_cipher,["deciphered",string_char,sum],deciphered_char)
+  defp decipher_char_no_cache(string_char,valid_chars,sum,key,rand_key) do
+    position = (extract_value_from_string_char(string_char) - sum) |> NumberUtil.to_positive()
+    deciphered_char = Enum.at(valid_chars,position)
+    EtsUtil.store_in_cache(key,"deciphered_#{string_char}_#{sum}_#{rand_key}",deciphered_char)
     deciphered_char
   end
 
@@ -296,51 +311,8 @@ defmodule Apollo18.Cipher do
   
   defp extract_value_from_string_char(string_char) do
     chars = String.graphemes(string_char)
-    [Enum.at(chars,1),Enum.at(chars,0),Enum.at(chars,3),Enum.at(chars,2)] 
-      |> IO.iodata_to_binary() |> Integer.parse(16) |> Tuple.to_list() |> Enum.at(0)
-  end
-
-
-  
-  defp valid_chars() do
-    [
-      "A","Ä","Ã","Â","Á","À","Æ","А",
-      "B","Б","Ъ","Ь","Ы","C","Ç","D","Ð","Д","В","С",
-      "E","Ë","Ẽ","Ê","É","È","Э","Е",
-      "F","Ф","G","Г","H","Н",
-      "I","Ï","Ĩ","Î","Í","Ì",
-      "J","Ж","K","К","L","Л",
-      "M","М","N","Ñ","И","Й",
-      "O","Ö","Õ","Ô","Ó","Ò","Ѳ","О",
-      "P","Р","П","Q","R","S","Ш","Щ","T","Т","Þ","Ц","Ч",
-      "U","Ü","Ũ","Û","Ú","Ù",
-      "V","X","Х","W",
-      "Y","Ÿ","Ỹ","Ŷ","Ý","Ỳ","У",
-      "Z","З",
-      "ẞ","Ю","Я",
-      "a","ä","ã","â","á","à","æ","а",
-      "b","б","ъ","ь","ы","c","ç","d","ð","д","в","с",
-      "e","ë","ẽ","ê","é","è","ə","œ","ɛ","э","е",
-      "f","ф","g","г","h","н",
-      "i","ï","ĩ","î","í","ì",
-      "j","ж","k","к","l","л",
-      "m","м","n","ñ","и","й",
-      "o","ö","õ","ô","ó","ò","ѳ","о",
-      "p","р","п","q","r","s","ш","щ","t","т","þ","ц","ч",
-      "u","ü","ũ","û","ú","ù",
-      "v","x","х","w",
-      "y","ÿ","ỹ","ŷ","ý","ỳ","у",
-      "z","з",
-      "ß","ю","я",
-      "ʃ","ʒ","ʁ","ɾ",
-      "Ѣ","ѣ","Ѵ","ѵ",
-      "0","1","2","3","4","5","6","7","8","9",
-      " ",".",",",";",":","<",">","/","\\","?","|",
-      "[","]","{","}","(",")","º","°","ª",
-      "+","-","=","_","*","&","%","$","#","@",
-      "~","^","´","`","‘","’","“","”",
-      "!","'","\"","\n","\r","\t","\b","\f"
-    ]
+    "#{Enum.at(chars,1)}#{Enum.at(chars,0)}#{Enum.at(chars,3)}#{Enum.at(chars,2)}" 
+      |> Integer.parse(16) |> Tuple.to_list() |> Enum.at(0)
   end
 
 

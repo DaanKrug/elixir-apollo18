@@ -10,7 +10,7 @@ The package can be installed by adding `Apollo 18` to your list of dependencies 
 ```elixir
 def deps do
   [
-    {:apollo18, "~> 0.1.0"}
+    {:apollo18, "~> 0.1.1"}
   ]
 end
 ```

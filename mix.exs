@@ -1,12 +1,12 @@
 defmodule Apollo18.MixProject do
   use Mix.Project
   
-  @project_url "https://github.com/DaanKrug/apollo18"
+  @project_url "https://github.com/DaanKrug/elixir-apollo18"
 
   def project do
     [
       app: :apollo18,
-      version: "0.1.0",
+      version: "0.1.1",
       elixir: "~> 1.11",
       source_url: @project_url,
       homepage_url: @project_url,
